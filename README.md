@@ -1,1 +1,1 @@
-# STATS-790 - Hainan xU
+# STATS-790 - Hainan Xu
