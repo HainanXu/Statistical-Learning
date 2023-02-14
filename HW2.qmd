@@ -1,0 +1,328 @@
+---
+title: "STATS790 HW2"
+format: pdf
+editor: visual
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+```{r}
+library(matlib)
+library(microbenchmark)
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(glmnet)
+```
+
+## Question 1
+
+### Naive linear Algebra:
+
+To estimate the coefficients of linear regression $\boldsymbol\beta$, we can use the ordinary least squares, so we have,
+
+$$
+\begin{aligned}
+S(\boldsymbol\beta)&=\sum_{n=1}^ie_i\\
+&=\epsilon'\epsilon\\
+&=({\textbf{y}-\textbf{X}\boldsymbol\beta})'(\textbf{y}-\textbf{X}\boldsymbol\beta)\\
+&=\textbf{y}'\textbf{y}-2\boldsymbol\beta'\textbf{Xy}-\boldsymbol\beta'\textbf{X}'\textbf{X}\boldsymbol\beta
+\end{aligned}
+$$
+
+Then, we want to take the derivative of $S(\boldsymbol\beta)$, 
+$$
+\frac{\partial S(\boldsymbol\beta)}{\partial \boldsymbol\beta}=-2\textbf{Xy}+2\textbf{X}'\textbf{X}\boldsymbol \beta
+$$ 
+Set the derivative to zero, we get
+
+$$
+\begin{aligned}
+-2\textbf{Xy}+2\textbf{X}'\textbf{X}\boldsymbol {\hat{\beta}}&=0\\
+\textbf{X}'\textbf{X}\boldsymbol {\hat{\beta}}&=\textbf{Xy}\\
+\boldsymbol {\hat\beta}&=(\textbf{X}'\textbf{X})^{-1}\textbf{X}'\textbf{y}
+\end{aligned}
+$$
+
+### QR decomposition
+
+(Due to time constraint, I will use a less regorous matrix representation, such as using $X$ to represent $\textbf{X}$. The hand-written script with more details is available in the **appendix** at the end of this document.)
+
+$Q$ is orthonormal and $R$ is upper triangular. Decompose $X$ as $X= QR$ and substitute it into $X'X\hat{\beta}=Xy$, we have
+
+$$\hat \beta=R^{-1}Q'y$$
+
+### SVD 
+
+$$\hat \beta=VD^{-1}U'y$$
+
+For detailed calculation process, check appendix.
+
+### Cholesky Decomposition 
+
+$$\hat \beta=(L')^{-1}L^{-1}X'y$$
+
+For detailed calculation process, check appendix.
+
+### Computation part
+
+Assume there is no intercept $\beta_0$.
+
+```{r simulation function}
+set.seed(101)
+sim_fun <- function(n, p) {
+    y <- rnorm(n)
+    X <- matrix(rnorm(p*n), ncol = p)
+    list(X = X, y = y)
+}
+```
+
+```{r naive approach}
+naive<- function(X, y) {
+  beta <- inv(t(X) %*% X) %*% t(X) %*% y
+  return(beta)
+}
+```
+
+```{r qr decomposition}
+qr_fun <- function(X, y) {
+  QR<-qr(x=X)
+  Q<-qr.Q(QR)
+  R<-qr.R(QR)
+  beta <- inv(R) %*% t(Q) %*% y
+  return(beta)
+}
+```
+
+```{r svd}
+svd_fun <- function(X, y) {
+  SVD <- svd(X)  
+  U <- SVD$u  
+  D <- diag(SVD$d)  
+  V <- SVD$v 
+  beta<-V%*%inv(D)%*%t(U)%*%y
+  return(list(beta))  
+}
+```
+
+### Fix p=10,observe the average time change with n
+
+From the result of the linear regressions, we know that, for SVD, 1 unit increase in log(n) will increase around 0.6845 unit of change in log of computational time. For naive approach, 1 unit increase in log(n) will increase 0.3121 unit of change in log of computational time.For QR decomposition approach, 1 unit increase in log(n) will increase 0.5567 unit of change in log of computational time.
+
+```{r benchmark the naive,qr_fun and svd_fun}
+set.seed(101)
+avg_times<-list()
+n_range<-round(10^seq(2, 5, by = 0.25))#seq(10,1100,100) 
+
+svd_times<-list()
+for (n in n_range){
+    s<-sim_fun(n,10)
+    svd_m<-microbenchmark(svd_fun(s$X,s$y))
+    svd_times[[paste(n)]] <- svd_m$time
+}
+avg_times$svd <- sapply(svd_times, mean)
+fit.svd <- lm(log(avg_times$svd) ~ log(n_range))
+
+qr_times<-list()
+for (n in n_range){
+    s<-sim_fun(n,10)
+    qr_m<-microbenchmark(qr_fun(s$X,s$y))
+    qr_times[[paste(n)]] <- qr_m$time
+}
+avg_times$qr <- sapply(qr_times, mean)
+fit.qr <- lm(log(avg_times$qr) ~ log(n_range))
+
+naive_times<-list()
+for (n in n_range){
+    s<-sim_fun(n,10)
+    naive_m<-microbenchmark(naive(s$X,s$y))
+    naive_times[[paste(n)]] <- naive_m$time
+}
+
+avg_times$naive <- sapply(naive_times, mean)
+fit.naive <- lm(log(avg_times$naive) ~ log(n_range))
+
+fit.qr
+fit.naive
+fit.svd
+```
+
+The log-log plot is shown as below. The red line and dots represents for the qr decomposition, green lines and green dots represents for the naive approach, and blue line and blue dots represents for the singular value decomposition approach. Overall, the time required for each algorithm increases exponentially when n increases. In addition, the naive approach did not perform well when n is small; when n become larger, QR decomposition and SVD takes even more time and naive approach become efficent. In our example, when n get's larger, QR decomposition performs the best.
+
+```{r log-log plot for the benchmarks}
+p<-ggplot(data=avg_times%>%as.data.frame())+geom_line(aes(x=log(n_range),y=log(avg_times$qr)),color='red')+geom_point(aes(x=log(n_range),y=log(avg_times$qr)),color='red')+
+  
+  geom_line(aes(x=log(n_range),y=log(avg_times$naive)),color='green')+geom_point(aes(x=log(n_range),y=log(avg_times$naive)),color='green')+
+    geom_line(aes(x=log(n_range),y=log(avg_times$svd)),color='blue')+geom_point(aes(x=log(n_range),y=log(avg_times$svd)),color='blue')+labs(x="log of n",y="log of average times",color="Legend")+
+  ggtitle("Execution Time at p=10")+theme_bw()
+p
+```
+
+### Fix n=100,observe the average time change with p
+
+Overall, the average time increases as p increases. The SVD performs use the least average time, whereas the naive approach have the highest average time. This indicates that, when the number of covariates increases, it is better to use SVD or QR decomposition compared to using naive approach.
+
+```{r}
+set.seed(101)
+p_range<-c(5,25,50)#seq(10,1100,100) 
+
+svd_times<-list()
+for (p in p_range){
+    s<-sim_fun(100,p)
+    svd_m<-microbenchmark(svd_fun(s$X,s$y))
+    svd_times[[paste(n, p)]] <- svd_m$time
+}
+avg_times$svd <- sapply(svd_times, mean)
+fit.svd <- lm(log(avg_times$svd) ~ log(p_range))
+
+qr_times<-list()
+for (p in p_range){
+  s<-sim_fun(100,p)
+    qr_m<-microbenchmark(qr_fun(s$X,s$y))
+    qr_times[[paste(n, p)]] <- qr_m$time
+}
+avg_times$qr <- sapply(qr_times, mean)
+fit.qr <- lm(log(avg_times$qr) ~ log(p_range))
+
+naive_times<-list()
+for (p in p_range){
+    s<-sim_fun(100,p)
+    naive_m<-microbenchmark(naive(s$X,s$y))
+    naive_times[[paste(n, p)]] <- naive_m$time
+}
+
+avg_times$naive <- sapply(naive_times, mean)
+fit.naive <- lm(log(avg_times$naive) ~ log(p_range))
+
+fit.qr
+fit.naive
+fit.svd
+
+p2<-ggplot(data=avg_times%>%as.data.frame())+geom_line(aes(x=log(p_range),y=log(avg_times$qr)),color='red')+geom_point(aes(x=log(p_range),y=log(avg_times$qr)),color='red')+
+  
+  geom_line(aes(x=log(p_range),y=log(avg_times$naive)),color='green')+geom_point(aes(x=log(p_range),y=log(avg_times$naive)),color='green')+
+    geom_line(aes(x=log(p_range),y=log(avg_times$svd)),color='blue')+geom_point(aes(x=log(p_range),y=log(avg_times$svd)),color='blue')+labs(x="log of n",y="log of average times",color="Legend")+
+  ggtitle("Execution Time at p=10")+theme_bw()
+p2
+
+```
+
+\newpage
+
+## Question 2
+
+Implement ridge regression by data augmentation.
+
+```{r ridge with augmentation}
+prostate<-read_table("https://hastie.su.domains/ElemStatLearn/datasets/prostate.data")
+X <- as.matrix(prostate[, 1:8])
+y<-as.matrix(prostate[,9])
+X <- scale(X, center = TRUE, scale = TRUE)
+
+ridge_aug<-function(X,y,lam){
+  X_aug <- rbind(X, sqrt(lam) * diag(ncol(X)))
+  y_aug <- c(y, rep(0, ncol(X)))
+  #fit ridge regression model
+  beta <- inv(t(X_aug) %*% X_aug + lam * diag(ncol(X_aug))) %*% t(X_aug) %*% y_aug
+  return(beta)
+
+}
+```
+
+```{r naive ridge}
+lambda<-seq(0,1,0.1)
+ridge_naive<-function(X,y,lambda){
+  fit <- glmnet(X, y, alpha = 0, lambda =lambda)
+  beta_glmnet <- coef(fit, s = lambda)[-1]
+  beta_glmnet
+}
+fit <- glmnet(X, y, alpha = 0, lambda =lambda)
+fit
+
+ridge_naive_time<-list()
+ridge_aug_time<-list()
+for (i in seq_along(lambda)){
+  lam<-lambda[i]
+  ridge_naive_m<-microbenchmark(ridge_naive(X,y,lam))
+  ridge_naive_time[i]=mean(ridge_naive_m$time)
+  
+  ridge_aug_m<-microbenchmark(ridge_aug(X,y,lam))
+  ridge_aug_time[i]=mean(ridge_aug_m$time)
+}
+
+```
+
+```{r}
+ggplot()+
+  geom_line(aes(x=lambda,y=as.numeric(ridge_aug_time)),color="blue")+
+  geom_line(aes(x=lambda,y=as.numeric(ridge_naive_time)),color="green") +labs(x="lambda",y="time(mean)",legend=colors)+theme_bw()
+```
+
+In the graph above, the green line represents for the naive approach and the blue line represents for the augmented approach. Overall, for different lambdas, the naive approach takes more time compared with the augmented ridge.
+
+\newpage
+
+## Question 3
+
+#### 3.6
+
+$$P(\beta|y)\propto P(y|\beta)P(\beta)$$
+
+where $y\sim N(X\beta,\sigma^2I),\beta\sim(0,\tau I)$. 
+$$
+P(\beta|y)\propto e^{(-\frac{1}{2})(\frac{y-\mu}{\sigma})^2}e^{(-\frac{1}{2})(\frac{\beta-\mu}{\sigma})^2}
+$$
+
+Take the log of both side, we have
+
+$$
+\begin{aligned}
+\log p(y, \beta | X) &\propto{(-\frac{1}{2})(\frac{(y-X\beta)'(y-X\beta)}{\sigma^2})}+{(-\frac{1}{2})(\frac{\beta'\beta}{\tau^2})}\\
+&\propto -\frac{(y - X\beta)' (y - X\beta)}{2\sigma^2} - \frac{\beta' \beta}{2\tau} \\
+&\propto -\frac{(y - X\beta)' (y - X\beta)\tau}{2\sigma^2\tau} - \frac{\beta' \beta\sigma^2}{2\sigma^2\tau}\\
+&\propto -(y - X\beta)' (y - X\beta)\tau- {\beta' \beta\sigma^2}\\
+&\propto -(y - X\beta)' (y - X\beta)- \frac{\sigma^2}{\tau} \beta' \beta
+\end{aligned}
+$$
+
+Finally, we relate the regularization parameters $\lambda$ in the ridge regression formulas. If we let $\lambda=\frac{\sigma^2}{\tau}$, then, it is equivalent to,
+
+$$\propto -(y - X\beta)' (y - X\beta)- \lambda \beta' \beta$$
+
+Maximize the ridge regression function is equilaent to maximize the posterior distribution.Thus the regularization parameter. $\lambda$ in the ridge regression controls the regularization penalty applied to $beta$. In addition, the strength of the penalty is controlled by the ratio of prior variance of regression coefficients and the error terms in the sampling model.
+
+\newpage
+
+#### 3.19
+
+##### Ridge
+
+By textbook 3.47, we can get the solution by decomposing X by singular value decomposition, the solution is, $$X\hat\beta^{ridge}=\sum_{j=1}^pu_j\frac{d_j^2}{d_j^2+\lambda}u_j'y.$$
+
+From this expression, we are able to see that $\lambda$ is in the denominator. As $\lambda \rightarrow 0$, numerator does not change, and the denominator gets smaller. Thus, the entire RHS of the equation will become larger. In addition, we know the X on the LHS is fixed, so we can conclude $\beta$ will increase as $\lambda \rightarrow 0$.
+
+##### Lasso
+
+The same property does not hold for lasso. Here is a counter example: Textbook table 3.4 shows the formula for orthonormal columns. The formula for lasso is $sign(\hat\beta)(\|\hat\beta_j\|-\lambda)$. Thus, when $\lambda \rightarrow 0$, we are not sure if $\beta$ will increase as well since it also depends on the sign of the $\hat\beta_j$.
+
+\newpage
+
+#### 3.28 
+check appendix
+
+\newpage
+
+#### 3.30
+
+$X^* =[X,a\textbf{I}_p]'$, where a is constant, $I_p$ is the identity matrix. $y^*=[y,\textbf{0}_p]'$ Then,
+$$
+\begin{aligned}
+\hat\beta&=argmin_{\beta}(\|y^*-X^*\beta\|^2_2+\lambda^*|\beta|_1)\\
+&=argmin_\beta(\|y-X\beta\|^2_2+a^2\|\beta\|_2^2+\lambda^*|\beta|_1)
+\end{aligned}
+$$ 
+If we take $a^2=\lambda \alpha$ and $\lambda^*=\lambda(1-\alpha)$, we have $$argmin_\beta(\|y-X\beta\|^2_2+\lambda\alpha\|\beta\|_2^2+\lambda(1-\alpha)|\beta|_1)$$
+
+### Appendix
