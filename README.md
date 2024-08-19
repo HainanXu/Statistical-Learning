@@ -2,4 +2,4 @@
 textbook: The elements of statistical learning
 
 
-instructor: Dr.Ben Bolker
+instructor: Prof.Ben Bolker
